@@ -13,6 +13,7 @@ Vagrant.configure("2") do |config|
   # Every Vagrant development environment requires a box. You can search for
   # boxes at https://atlas.hashicorp.com/search.
   config.vm.box = "ubuntu/trusty64"
+  config.vm.hostname = "box4docker"
 
   # Disable automatic box update checking. If you disable this, then
   # boxes will only be checked for updates when the user runs
@@ -26,7 +27,7 @@ Vagrant.configure("2") do |config|
 
   # Create a private network, which allows host-only access to the machine
   # using a specific IP.
-  # config.vm.network "private_network", ip: "192.168.33.10"
+  config.vm.network "private_network", type: "dhcp"
 
   # Create a public network, which generally matched to bridged network.
   # Bridged networks make the machine appear as another physical device on
@@ -37,7 +38,7 @@ Vagrant.configure("2") do |config|
   # the path on the host to the actual folder. The second argument is
   # the path on the guest to mount the folder. And the optional third
   # argument is a set of non-required options.
-  # config.vm.synced_folder "../data", "/vagrant_data"
+  config.vm.synced_folder ".", "/vagrant"
 
   # Provider-specific configuration so you can fine-tune various
   # backing providers for Vagrant. These expose provider-specific options.
@@ -70,37 +71,36 @@ Vagrant.configure("2") do |config|
 
     # step: use cn mirrors.
     echo "Updating apt sources list ... "
-    sudo sed -i 's/archive.ubuntu.com/cn.archive.ubuntu.com/' /etc/apt/sources.list
+    sed -i 's/\\\/\\\/archive.ubuntu.com/\\\/\\\/cn.archive.ubuntu.com/' /etc/apt/sources.list
+    
     echo "deb https://apt.dockerproject.org/repo ubuntu-trusty main" > /etc/apt/sources.list.d/docker.list
-
-    # step: update
-    # echo "Refresh after apt sources list update"
-    sudo apt-get update
-    [ $? -eq 0 ] || { echo "Failed to update apt sources"; exit; }
-
-    # step: install common utils
-    sudo apt-get install -y iftop traceroute tshark git
+    apt-get update
 
     # step: install docker
-    sudo apt-get install -y apt-transport-https ca-certificates
-    sudo apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys 58118E89F3A912897C070ADBF76221572C52609D
-    sudo apt-get update
-    [ $? -eq 0 ] || { echo "Failed to update apt sources for docker"; exit; }
-    sudo apt-get purge lxc-docker # not installed on 14.04
-    sudo apt-cache policy docker-engine
-    sudo apt-get install -y linux-image-extra-$(uname -r)
-    sudo apt-get install -y apparmor
-    sudo apt-get install -y docker-engine
-    # run "docker" without sudo.
-    # sudo groupadd docker
-    sudo usermod -aG docker vagrant
+    apt-get install -y apt-transport-https ca-certificates
+    apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys 58118E89F3A912897C070ADBF76221572C52609D
+    apt-get update
+    apt-cache policy docker-engine
+    apt-get install -y linux-image-extra-$(uname -r)
+    apt-get install -y apparmor
+    apt-get install -y --force-yes docker-engine
 
-    # step: jdk7
-    sudo apt-get install -y openjdk-7-jdk
+    [ $? -ne 0 ] && { echo "Failed to install docker-engine"; exit 1; }
 
-    # step: insecure-registry
-    # git clone https://github.com/braydenwt/docker-insecure-registry.git
-    # (cd docker-insecure-registry && chmod +x insecure-registry-daemon.sh && sudo ./insecure-registry-daemon.sh)
+    # modify DOCKER_OPTS
+    if [ -f /vagrant/post-install-docker-setup.sh ];
+    then
+      echo "Modify DOCKER_OPTS"
+      chmod +x /vagrant/post-install-docker-setup.sh
+      /vagrant/post-install-docker-setup.sh
+    fi
 
+    # step: install common utils
+    apt-get install -y iftop traceroute tshark git
+    # # step: jdk
+    apt-get install -y default-jdk
+
+    # step: dns for docker-registry
+    echo 10.128.43.55  docker-sh.englishtown.com >> /etc/hosts
   SHELL
 end

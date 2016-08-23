@@ -14,6 +14,8 @@ Vagrant.configure("2") do |config|
   # boxes at https://atlas.hashicorp.com/search.
   config.vm.box = "ubuntu/trusty64"
 
+  config.vm.hostname = "docker4dev"
+
   # Disable automatic box update checking. If you disable this, then
   # boxes will only be checked for updates when the user runs
   # `vagrant box outdated`. This is not recommended.
@@ -26,7 +28,7 @@ Vagrant.configure("2") do |config|
 
   # Create a private network, which allows host-only access to the machine
   # using a specific IP.
-  # config.vm.network "private_network", ip: "192.168.33.10"
+  config.vm.network "private_network", type: "dhcp"
 
   # Create a public network, which generally matched to bridged network.
   # Bridged networks make the machine appear as another physical device on
@@ -45,7 +47,7 @@ Vagrant.configure("2") do |config|
   #
   config.vm.provider "virtualbox" do |vb|
 
-    vb.name = "ubuntu-trusty64"
+    vb.name = "ubuntu-trusty64-docker-jdk8"
 
     # Customize the amount of memory on the VM:
     vb.memory = "512"
@@ -66,6 +68,52 @@ Vagrant.configure("2") do |config|
   # documentation for more information about their specific syntax and use.
 
   config.vm.provision "shell", inline: <<-SHELL
-    # sudo apt-get install -y iftop traceroute
+    # https://docs.docker.com/engine/installation/linux/ubuntulinux/
+
+    # step: use cn mirrors.
+    echo "Updating apt sources.list files ... "
+    sudo sed -i 's/archive.ubuntu.com/cn.archive.ubuntu.com/' /etc/apt/sources.list
+
+    echo "deb https://apt.dockerproject.org/repo ubuntu-xenial main" > /etc/apt/sources.list.d/docker.list
+    sudo apt-get update
+
+    sudo apt-get install -y apt-transport-https ca-certificates
+    sudo apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys 58118E89F3A912897C070ADBF76221572C52609D
+    sudo apt-get update
+    sudo apt-cache policy docker-engine
+    sudo apt-get install -y linux-image-extra-$(uname -r) linux-image-extra-virtual
+    sudo apt-get install -y docker-engine
+
+    [ $? -ne 0 ] && { echo "Failed to install docker-engine"; exit 1; }
+
+    # run "docker" without sudo. $USER doesn't work.
+    sudo usermod -aG docker ubuntu
+    sudo groups ubuntu
+
+    # sudo systemctl status docker
+    # sudo systemctl enable docker
+
+    # step: install jdk8 (openjdk)
+    # sudo apt-get install -y default-jdk
+
+    # step: install common utils
+    # sudo apt-get install -y iftop traceroute tshark git
+
+    # modify DOCKER_OPTS
+    if [ -f /vagrant/post-install-docker-setup.sh ];
+    then
+      echo "Modify DOCKER_OPTS"
+      sudo chmod +x /vagrant/post-install-docker-setup.sh
+      sudo /vagrant/post-install-docker-setup.sh
+    fi
+
+    # step: dns for docker-registry
+    echo "Update local DNS"
+    sudo echo 10.128.43.55  docker-sh.englishtown.com >> /etc/hosts
+
+    # restart
+    # echo "Rebooting machine."
+    # sudo reboot
+
   SHELL
 end
