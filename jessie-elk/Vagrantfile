@@ -1,0 +1,174 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+# All Vagrant configuration is done below. The "2" in Vagrant.configure
+# configures the configuration version (we support older styles for
+# backwards compatibility). Please don't change it unless you know what
+# you're doing.
+Vagrant.configure("2") do |config|
+  # The most common configuration options are documented and commented below.
+  # For a complete reference, please see the online documentation at
+  # https://docs.vagrantup.com.
+
+  # Every Vagrant development environment requires a box. You can search for
+  # boxes at https://atlas.hashicorp.com/search.
+  config.vm.box = "debian/jessie64"
+  config.vm.hostname = "box4insight"
+
+  # Disable automatic box update checking. If you disable this, then
+  # boxes will only be checked for updates when the user runs
+  # `vagrant box outdated`. This is not recommended.
+  # config.vm.box_check_update = false
+
+  # Create a forwarded port mapping which allows access to a specific port
+  # within the machine from a port on the host machine. In the example below,
+  # accessing "localhost:8080" will access port 80 on the guest machine.
+  # config.vm.network "forwarded_port", guest: 80, host: 8080
+
+  # Create a private network, which allows host-only access to the machine
+  # using a specific IP.
+  # config.vm.network "private_network", ip: "192.168.33.10"
+
+  # Create a public network, which generally matched to bridged network.
+  # Bridged networks make the machine appear as another physical device on
+  # your network.
+  # config.vm.network "public_network"
+
+  # Share an additional folder to the guest VM. The first argument is
+  # the path on the host to the actual folder. The second argument is
+  # the path on the guest to mount the folder. And the optional third
+  # argument is a set of non-required options.
+  
+  # NOTE: Run this before 'vagrant up' if any issue.
+  # vagrant plugin install vagrant-vbguest
+  config.vm.synced_folder ".", "/vagrant", type: "virtualbox"
+  config.vm.synced_folder "C:\\Softwares\\Apache24\\logs", "/var/log/apache2", type: "virtualbox"
+
+  # Provider-specific configuration so you can fine-tune various
+  # backing providers for Vagrant. These expose provider-specific options.
+  # Example for VirtualBox:
+  #
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = "jessie-elk"
+    # Customize the amount of memory on the VM:
+    vb.memory = "1024"
+  end
+  #
+  # View the documentation for the provider you are using for more
+  # information on available options.
+
+  # Define a Vagrant Push strategy for pushing to Atlas. Other push strategies
+  # such as FTP and Heroku are also available. See the documentation at
+  # https://docs.vagrantup.com/v2/push/atlas.html for more information.
+  # config.push.define "atlas" do |push|
+  #   push.app = "YOUR_ATLAS_USERNAME/YOUR_APPLICATION_NAME"
+  # end
+
+  # Enable provisioning with a shell script. Additional provisioners such as
+  # Puppet, Chef, Ansible, Salt, and Docker are also available. Please see the
+  # documentation for more information about their specific syntax and use.
+  config.vm.provision "shell", inline: <<-SHELL
+    # install util tools
+    sudo apt-get install -y vim
+
+    sudo mkdir -p /etc/apache2/conf/
+    sudo touch /etc/apache2/conf/httpd_logstash.conf
+    sudo cat > /etc/apache2/conf/httpd_logstash.conf << EOF
+# Logstash parse the Apache log based on this configuration.
+#Fields: timereceived servername serverip method uri query serverport clientip useragent referer status timetaken
+LogFormat "%t %v %h %m %U \"%q\" %p %a \"%{Referer}i\" \"%{User-Agent}i\" %>s %D" combined
+EOF
+
+    # install java8 (required by elk)
+    sudo touch /etc/apt/sources.list.d/webupd8team-java.list
+    echo "deb http://ppa.launchpad.net/webupd8team/java/ubuntu trusty main" | sudo tee -a /etc/apt/sources.list.d/webupd8team-java.list
+    echo "deb-src http://ppa.launchpad.net/webupd8team/java/ubuntu trusty main" | sudo tee -a /etc/apt/sources.list.d/webupd8team-java.list
+    sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys EEA14886
+    sudo apt-get update
+    # accept license
+    echo debconf shared/accepted-oracle-license-v1-1 select true | sudo debconf-set-selections
+    echo debconf shared/accepted-oracle-license-v1-1 seen true | sudo debconf-set-selections
+    sudo apt-get install -y oracle-java8-installer
+    java -version
+
+    # install logstash
+    wget -qO - https://packages.elasticsearch.org/GPG-KEY-elasticsearch | sudo apt-key add -
+    echo "deb http://packages.elasticsearch.org/logstash/1.5/debian stable main" | sudo tee -a /etc/apt/sources.list
+    sudo apt-get update
+    sudo apt-get install -y logstash
+
+    # config logstash
+    sudo mkdir -p /opt/logstash/patterns/
+    sudo touch /opt/logstash/patterns/extra_patterns
+    sudo cat > /opt/logstash/patterns/extra_patterns << EOF
+# LogFormat %t
+APACHE_DATE %{MONTHDAY}/%{MONTH}/%{YEAR}:%{TIME} %{ISO8601_TIMEZONE}
+EOF
+
+    sudo touch /etc/logstash/conf.d/apache.conf
+    sudo cat > /etc/logstash/conf.d/apache.conf << EOF
+input {
+    file {
+        path => '/var/log/apache2/access*.log'
+    }
+}
+filter {
+    grok {
+        patterns_dir => ["/opt/logstash/patterns"]
+        match => { "message" => "\[%{APACHE_DATE:log_timereceived}\] %{IPORHOST:log_servername} %{IPORHOST:log_serverip} %{WORD:log_method} %{URIPATH:log_path} \"%{DATA:log_querystring}\" %{POSINT:log_port} %{IPORHOST:log_clientip} %{DATA:log_referrer} %{DATA:log_useragent} %{POSINT:log_status} %{POSINT:log_timetaken}" }
+    }
+    if ![log_querystring] {
+        mutate {
+            add_field => { "log_querystring" => "-" }
+        }
+    }
+    if ![log_referrer] {
+        mutate {
+            add_field => { "log_referrer" => "-" }
+        }
+    }
+    if ![log_useragent] {
+        mutate {
+            add_field => { "log_useragent" => "-" }
+        }
+    }
+}
+output {
+    stdout { codec => rubydebug }
+    # elasticsearch { protocol => "http" }
+}
+EOF
+
+    # install elasticsearch
+    wget -qO - https://packages.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+    echo "deb http://packages.elastic.co/elasticsearch/1.7/debian stable main" | sudo tee -a /etc/apt/sources.list.d/elasticsearch-1.7.list
+    sudo apt-get update
+    sudo apt-get install -y elasticsearch
+
+    # install kibana
+    cd /opt
+    sudo wget https://download.elastic.co/kibana/kibana/kibana-4.1.2-linux-x64.tar.gz
+    sudo tar xvzf kibana-4.1.2-linux-x64.tar.gz
+
+    # config kibana
+    sudo touch /etc/systemd/system/kibana.service
+    sudo cat > /etc/systemd/system/kibana.service << EOF
+[Unit]
+Description=open source browser based analytics and search dashboard for Elasticsearch
+
+[Service]
+Type=simple
+ExecStart=/opt/kibana-4.1.2-linux-x64/bin/kibana  -c /opt/kibana-4.1.2-linux-x64/config/kibana.yml
+EOF
+
+    # start elasticsearch
+    # sudo systemctl start elasticsearch
+
+    # start kibana
+    # sudo systemctl start kibana
+
+    # start logstash
+    # # sudo /opt/logstash/bin/logstash -f /etc/logstash/conf.d
+    # sudo systemctl start logstash
+  SHELL
+end
