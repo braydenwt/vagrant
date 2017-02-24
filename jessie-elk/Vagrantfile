@@ -27,7 +27,7 @@ Vagrant.configure("2") do |config|
 
   # Create a private network, which allows host-only access to the machine
   # using a specific IP.
-  # config.vm.network "private_network", ip: "192.168.33.10"
+  config.vm.network "private_network", type: "dhcp"
 
   # Create a public network, which generally matched to bridged network.
   # Bridged networks make the machine appear as another physical device on
@@ -69,14 +69,15 @@ Vagrant.configure("2") do |config|
   # documentation for more information about their specific syntax and use.
   config.vm.provision "shell", inline: <<-SHELL
     # install util tools
-    sudo apt-get install -y vim
+    sudo apt-get install -y vim iftop curl unzip
 
     sudo mkdir -p /etc/apache2/conf/
     sudo touch /etc/apache2/conf/httpd_logstash.conf
     sudo cat > /etc/apache2/conf/httpd_logstash.conf << EOF
-# Logstash parse the Apache log based on this configuration.
+# Logstash parse the Apache log assuming that the log is in format below.
+# http://httpd.apache.org/docs/current/mod/mod_log_config.html
 #Fields: timereceived servername serverip method uri query serverport clientip useragent referer status timetaken
-LogFormat "%t %v %h %m %U \"%q\" %p %a \"%{Referer}i\" \"%{User-Agent}i\" %>s %D" combined
+LogFormat "%t %v %h %m %U \"%q\" %p %a \"%{Referer}i\" \"%{User-Agent}i\" %>s %{ms}T" combined
 EOF
 
     # install java8 (required by elk)
@@ -89,7 +90,6 @@ EOF
     echo debconf shared/accepted-oracle-license-v1-1 select true | sudo debconf-set-selections
     echo debconf shared/accepted-oracle-license-v1-1 seen true | sudo debconf-set-selections
     sudo apt-get install -y oracle-java8-installer
-    java -version
 
     # install logstash
     wget -qO - https://packages.elasticsearch.org/GPG-KEY-elasticsearch | sudo apt-key add -
@@ -99,45 +99,8 @@ EOF
 
     # config logstash
     sudo mkdir -p /opt/logstash/patterns/
-    sudo touch /opt/logstash/patterns/extra_patterns
-    sudo cat > /opt/logstash/patterns/extra_patterns << EOF
-# LogFormat %t
-APACHE_DATE %{MONTHDAY}/%{MONTH}/%{YEAR}:%{TIME} %{ISO8601_TIMEZONE}
-EOF
-
-    sudo touch /etc/logstash/conf.d/apache.conf
-    sudo cat > /etc/logstash/conf.d/apache.conf << EOF
-input {
-    file {
-        path => '/var/log/apache2/access*.log'
-    }
-}
-filter {
-    grok {
-        patterns_dir => ["/opt/logstash/patterns"]
-        match => { "message" => "\[%{APACHE_DATE:log_timereceived}\] %{IPORHOST:log_servername} %{IPORHOST:log_serverip} %{WORD:log_method} %{URIPATH:log_path} \"%{DATA:log_querystring}\" %{POSINT:log_port} %{IPORHOST:log_clientip} %{DATA:log_referrer} %{DATA:log_useragent} %{POSINT:log_status} %{POSINT:log_timetaken}" }
-    }
-    if ![log_querystring] {
-        mutate {
-            add_field => { "log_querystring" => "-" }
-        }
-    }
-    if ![log_referrer] {
-        mutate {
-            add_field => { "log_referrer" => "-" }
-        }
-    }
-    if ![log_useragent] {
-        mutate {
-            add_field => { "log_useragent" => "-" }
-        }
-    }
-}
-output {
-    stdout { codec => rubydebug }
-    # elasticsearch { protocol => "http" }
-}
-EOF
+    sudo cp /vagrant/opt/logstash/patterns/apache24 /opt/logstash/patterns/apache24
+    sudo cp /vagrant/etc/logstash/conf.d/apache.conf /etc/logstash/conf.d/apache.conf
 
     # install elasticsearch
     wget -qO - https://packages.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
@@ -145,30 +108,44 @@ EOF
     sudo apt-get update
     sudo apt-get install -y elasticsearch
 
+    # config elasticsearch
+    # cors enabled
+    sudo cp /vagrant/etc/elasticsearch/elasticsearch.yml /etc/elasticsearch/elasticsearch.yml
+    # cluster setup
+    sudo cp /vagrant/etc/elasticsearch/elasticsearch.yaml /etc/elasticsearch/elasticsearch.yaml
+
+    # install elasticsearch-hq
+    cd /opt
+    sudo wget https://github.com/royrusso/elasticsearch-HQ/zipball/master -O elasticsearch-hq.zip
+    sudo unzip elasticsearch-hq.zip -d elasticsearch-hq
+    cd elasticsearch-hq
+    sudo ln -s $(ls *elasticsearch-HQ* -d)/ master
+    sudo chown www-data:root /opt/elasticsearch-hq/master
+    sudo chmod u+w /opt/elasticsearch-hq/master
+
+    # install lighttpd
+    sudo apt-get install -y lighttpd
+    sudo cp /vagrant/etc/lighttpd/lighttpd.conf /etc/lighttpd/lighttpd.conf
+
     # install kibana
     cd /opt
     sudo wget https://download.elastic.co/kibana/kibana/kibana-4.1.2-linux-x64.tar.gz
     sudo tar xvzf kibana-4.1.2-linux-x64.tar.gz
 
     # config kibana
-    sudo touch /etc/systemd/system/kibana.service
-    sudo cat > /etc/systemd/system/kibana.service << EOF
-[Unit]
-Description=open source browser based analytics and search dashboard for Elasticsearch
-
-[Service]
-Type=simple
-ExecStart=/opt/kibana-4.1.2-linux-x64/bin/kibana  -c /opt/kibana-4.1.2-linux-x64/config/kibana.yml
-EOF
+    sudo cp /vagrant/etc/systemd/system/kibana.service /etc/systemd/system/kibana.service
 
     # start elasticsearch
-    # sudo systemctl start elasticsearch
-
-    # start kibana
-    # sudo systemctl start kibana
+    sudo systemctl start elasticsearch
 
     # start logstash
     # # sudo /opt/logstash/bin/logstash -f /etc/logstash/conf.d
-    # sudo systemctl start logstash
+    sudo systemctl start logstash
+
+    # start kibana
+    sudo systemctl start kibana
+
+    # start lighttpd
+    sudo systemctl start lighttpd
   SHELL
 end

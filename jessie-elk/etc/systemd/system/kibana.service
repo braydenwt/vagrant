@@ -1,0 +1,6 @@
+[Unit]
+Description=open source browser based analytics and search dashboard for Elasticsearch
+
+[Service]
+Type=simple
+ExecStart=/opt/kibana-4.1.2-linux-x64/bin/kibana  -c /opt/kibana-4.1.2-linux-x64/config/kibana.yml
