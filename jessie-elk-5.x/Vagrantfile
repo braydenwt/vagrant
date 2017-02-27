@@ -1,0 +1,147 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+# All Vagrant configuration is done below. The "2" in Vagrant.configure
+# configures the configuration version (we support older styles for
+# backwards compatibility). Please don't change it unless you know what
+# you're doing.
+Vagrant.configure("2") do |config|
+  # The most common configuration options are documented and commented below.
+  # For a complete reference, please see the online documentation at
+  # https://docs.vagrantup.com.
+
+  # Every Vagrant development environment requires a box. You can search for
+  # boxes at https://atlas.hashicorp.com/search.
+  config.vm.box = "debian/jessie64"
+  config.vm.hostname = "box4insight"
+
+  # Disable automatic box update checking. If you disable this, then
+  # boxes will only be checked for updates when the user runs
+  # `vagrant box outdated`. This is not recommended.
+  # config.vm.box_check_update = false
+
+  # Create a forwarded port mapping which allows access to a specific port
+  # within the machine from a port on the host machine. In the example below,
+  # accessing "localhost:8080" will access port 80 on the guest machine.
+  # config.vm.network "forwarded_port", guest: 80, host: 8080
+
+  # Create a private network, which allows host-only access to the machine
+  # using a specific IP.
+  config.vm.network "private_network", type: "dhcp"
+
+  # Create a public network, which generally matched to bridged network.
+  # Bridged networks make the machine appear as another physical device on
+  # your network.
+  # config.vm.network "public_network"
+
+  # Share an additional folder to the guest VM. The first argument is
+  # the path on the host to the actual folder. The second argument is
+  # the path on the guest to mount the folder. And the optional third
+  # argument is a set of non-required options.
+  
+  # NOTE: Run this before 'vagrant up' if any issue.
+  # vagrant plugin install vagrant-vbguest
+  config.vm.synced_folder ".", "/vagrant", type: "virtualbox"
+  config.vm.synced_folder "C:\\Softwares\\Apache24\\logs", "/var/log/apache2", type: "virtualbox"
+
+  # Provider-specific configuration so you can fine-tune various
+  # backing providers for Vagrant. These expose provider-specific options.
+  # Example for VirtualBox:
+  #
+  config.vm.provider "virtualbox" do |vb|
+    vb.name = "jessie-elk-5.x"
+    # Customize the amount of memory on the VM:
+    vb.memory = "2048"
+  end
+  #
+  # View the documentation for the provider you are using for more
+  # information on available options.
+
+  # Define a Vagrant Push strategy for pushing to Atlas. Other push strategies
+  # such as FTP and Heroku are also available. See the documentation at
+  # https://docs.vagrantup.com/v2/push/atlas.html for more information.
+  # config.push.define "atlas" do |push|
+  #   push.app = "YOUR_ATLAS_USERNAME/YOUR_APPLICATION_NAME"
+  # end
+
+  # Enable provisioning with a shell script. Additional provisioners such as
+  # Puppet, Chef, Ansible, Salt, and Docker are also available. Please see the
+  # documentation for more information about their specific syntax and use.
+  config.vm.provision "shell", inline: <<-SHELL
+    # install util tools
+    sudo apt-get install -y vim iftop curl unzip
+
+    sudo mkdir -p /etc/apache2/conf/
+    sudo touch /etc/apache2/conf/httpd_logstash.conf
+    sudo cat > /etc/apache2/conf/httpd_logstash.conf << EOF
+# Logstash parse the Apache log assuming that the log is in format below.
+# http://httpd.apache.org/docs/current/mod/mod_log_config.html
+#Fields: timereceived servername serverip method uri query serverport clientip useragent referer status timetaken
+LogFormat "%t %v %h %m %U \"%q\" %p %a \"%{Referer}i\" \"%{User-Agent}i\" %>s %{ms}T" combined
+EOF
+
+    # install java8 (required by elk)
+    sudo touch /etc/apt/sources.list.d/webupd8team-java.list
+    echo "deb http://ppa.launchpad.net/webupd8team/java/ubuntu trusty main" | sudo tee -a /etc/apt/sources.list.d/webupd8team-java.list
+    echo "deb-src http://ppa.launchpad.net/webupd8team/java/ubuntu trusty main" | sudo tee -a /etc/apt/sources.list.d/webupd8team-java.list
+    sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys EEA14886
+    sudo apt-get update
+    # accept license
+    echo debconf shared/accepted-oracle-license-v1-1 select true | sudo debconf-set-selections
+    echo debconf shared/accepted-oracle-license-v1-1 seen true | sudo debconf-set-selections
+    sudo apt-get install -y oracle-java8-installer
+
+    # prepare for logstash & elasticsearch & kibana
+    wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+    sudo apt-get install apt-transport-https
+    echo "deb https://artifacts.elastic.co/packages/5.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-5.x.list
+    sudo apt-get update
+
+    # install logstash
+    sudo apt-get install -y logstash
+
+    # config logstash
+    sudo mkdir -p /opt/logstash/patterns/
+    sudo cp /vagrant/opt/logstash/patterns/apache24 /opt/logstash/patterns/apache24
+    sudo cp /vagrant/etc/logstash/conf.d/apache.conf /etc/logstash/conf.d/apache.conf
+
+    # install elasticsearch
+    sudo apt-get install -y elasticsearch
+
+    # config elasticsearch
+    sudo cp /vagrant/etc/elasticsearch/jvm.options /etc/elasticsearch/jvm.options
+    sudo cp /vagrant/etc/elasticsearch/elasticsearch.yml /etc/elasticsearch/elasticsearch.yml
+
+    # install kibana
+    sudo apt-get install -y kibana
+
+    # config kibana
+    sudo cp /vagrant/etc/kibana/kibana.yml /etc/kibana/kibana.yml
+
+    # install elasticsearch-hq
+    cd /opt
+    sudo wget https://github.com/royrusso/elasticsearch-HQ/zipball/master -O elasticsearch-hq.zip
+    sudo unzip elasticsearch-hq.zip -d elasticsearch-hq
+    cd elasticsearch-hq
+    sudo ln -s $(ls *elasticsearch-HQ* -d)/ master
+    sudo chown www-data:root /opt/elasticsearch-hq/master
+    sudo chmod u+w /opt/elasticsearch-hq/master
+
+    # install lighttpd
+    sudo apt-get install -y lighttpd
+    sudo cp /vagrant/etc/lighttpd/lighttpd.conf /etc/lighttpd/lighttpd.conf
+
+    # start elasticsearch  http://localhost:9200
+    sudo systemctl start elasticsearch
+
+    # start logstash
+    sudo systemctl start logstash
+
+    # start kibana http://localhost:5601
+    sudo systemctl start kibana
+
+    # start lighttpd http://localhost:9100
+    sudo systemctl start lighttpd
+    sudo systemctl restart lighttpd
+  SHELL
+end

@@ -1,0 +1,3 @@
+APACHE_DATE %{MONTHDAY}/%{MONTH}/%{YEAR}:%{TIME} %{ISO8601_TIMEZONE}
+APACHE_URIPATH (?:/[A-Za-z0-9$.+!*'(){},~:;=@#%&_\-|]*)+
+APACHE24_LOG \[%{APACHE_DATE:log_timereceived}\] %{IPORHOST:log_servername} %{IPORHOST:log_serverip} %{WORD:log_method} %{APACHE_URIPATH:log_path} \"%{DATA:log_querystring}\" %{POSINT:log_port} %{IPORHOST:log_clientip} \"%{DATA:log_referrer}\" \"%{DATA:log_useragent}\" %{POSINT:log_status} %{INT:log_timetaken}
